@@ -117,6 +117,7 @@ sealed class ExportedType {
         object Any : Primitive("any")
         object Unit : Primitive("void")
         object Nothing : Primitive("never")
+        object UniqueSymbol : Primitive("unique symbol")
     }
 
     sealed class LiteralType<T : Any>(val value: T) : ExportedType() {
@@ -143,6 +144,8 @@ sealed class ExportedType {
     class UnionType(val lhs: ExportedType, val rhs: ExportedType) : ExportedType()
 
     class IntersectionType(val lhs: ExportedType, val rhs: ExportedType) : ExportedType()
+
+    class PropertyType(val container: ExportedType, val propertyName: ExportedType) : ExportedType()
 
     class ImplicitlyExportedType(val type: ExportedType) : ExportedType() {
         override fun withNullability(nullable: Boolean) =

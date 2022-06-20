@@ -15,11 +15,11 @@ import org.jetbrains.kotlin.ir.util.parentAsClass
 import org.jetbrains.kotlin.js.common.isValidES5Identifier
 import org.jetbrains.kotlin.serialization.js.ModuleKind
 
-private const val declare = "declare"
 private const val Nullable = "Nullable"
-private const val doNotImplementIt = "__doNotImplementIt"
 private const val objects = "_objects_"
 private const val syntheticObjectNameSeparator = '$'
+private const val magicPropertyName = "__doNotUseOrImplementIt"
+private const val doNotImplementIt = "__doNotImplementIt"
 
 fun ExportedModule.toTypeScript(): String {
     return ExportModelToTsDeclarations().generateTypeScript(name, this)
@@ -37,15 +37,9 @@ class ExportModelToTsDeclarations {
         get() = if (this == ModuleKind.PLAIN) "    " else ""
 
     fun generateTypeScript(name: String, module: ExportedModule): String {
-        val declareKeyword = when (module.moduleKind) {
-            ModuleKind.PLAIN -> ""
-            else -> "$declare "
-        }
         val types = """
-       type $Nullable<T> = T | null | undefined
-       ${declareKeyword}const $doNotImplementIt: unique symbol
-       type $doNotImplementIt = typeof $doNotImplementIt
-    """.trimIndent().prependIndent(module.moduleKind.indent) + "\n"
+           type $Nullable<T> = T | null | undefined
+        """.trimIndent().prependIndent(module.moduleKind.indent) + "\n"
 
         val declarationsDts = types + module.declarations.toTypeScript(module.moduleKind)
 
@@ -248,7 +242,13 @@ class ExportModelToTsDeclarations {
         val (memberObjects, nestedDeclarations) = nestedClasses.partition { it.couldBeProperty() }
 
         val members = members
-            .let { if (shouldNotBeImplemented()) it.withMagicProperty() else it }
+            .let {
+                when {
+                    shouldContainImplementationOfMagicProperty() -> it.withMagicPropertyForInterfaceImplementation(this)
+                    shouldNotBeImplemented() -> it.withMagicInterfaceProperty(this)
+                    else -> it
+                }
+            }
             .map {
                 if (!ir.isInner || it !is ExportedFunction || !it.isStatic) {
                     it
@@ -316,8 +316,8 @@ class ExportModelToTsDeclarations {
         }
     }
 
-    private fun ExportedRegularClass.shouldNotBeImplemented(): Boolean {
-        return (isInterface && !ir.isExternal) || superInterfaces.any { it is ExportedType.ClassType && !it.ir.isExternal }
+    private fun ExportedClass.shouldNotBeImplemented(): Boolean {
+        return (this is ExportedRegularClass && isInterface && !ir.isExternal) || superInterfaces.any { it is ExportedType.ClassType && !it.ir.isExternal }
     }
 
     private fun List<ExportedDeclaration>.withMagicProperty(): List<ExportedDeclaration> {
@@ -335,12 +335,6 @@ class ExportModelToTsDeclarations {
                 irSetter = null,
             )
         )
-    }
-
-    private fun IrClass.asNestedClassAccess(): String {
-        val name = getJsNameOrKotlinName().identifier
-        if (parent !is IrClass) return name
-        return "${parentAsClass.asNestedClassAccess()}.$name"
     }
 
     private fun ExportedClass.withProtectedConstructors(): ExportedRegularClass {
@@ -385,11 +379,82 @@ class ExportModelToTsDeclarations {
         )
     }
 
+    private fun ExportedRegularClass.shouldContainImplementationOfMagicProperty(): Boolean {
+        return !ir.isExternal && superInterfaces.any { it is ExportedType.ClassType && !it.ir.isExternal }
+    }
+
+    fun ExportedClass.generateTagType(): ExportedType {
+        return ExportedType.InlineInterfaceType(
+            listOf(
+                ExportedProperty(
+                    name,
+                    ExportedType.Primitive.UniqueSymbol,
+                    mutable = false,
+                    isMember = true,
+                    isStatic = false,
+                    isAbstract = false,
+                    isProtected = false,
+                    isField = true,
+                    irGetter = null,
+                    irSetter = null,
+                )
+            )
+        )
+    }
+
+    fun List<ExportedDeclaration>.withMagicInterfaceProperty(klass: ExportedClass): List<ExportedDeclaration> {
+        return plus(
+            ExportedProperty(
+                magicPropertyName,
+                klass.generateTagType(),
+                mutable = false,
+                isMember = true,
+                isStatic = false,
+                isAbstract = false,
+                isProtected = false,
+                isField = false,
+                irGetter = null,
+                irSetter = null
+            )
+        )
+    }
+
     private fun ExportedParameter.toTypeScript(indent: String): String {
         val name = sanitizeName(name, withHash = false)
         val type = type.toTypeScript(indent)
         val questionMark = if (hasDefaultValue) "?" else ""
         return "$name$questionMark: $type"
+    }
+
+    fun List<ExportedDeclaration>.withMagicPropertyForInterfaceImplementation(klass: ExportedClass): List<ExportedDeclaration> {
+        return if (klass.superInterfaces.isEmpty()) {
+            this
+        } else {
+            val intersectionOfTypes = klass.superInterfaces
+                .map { ExportedType.PropertyType(it, ExportedType.LiteralType.StringLiteralType(magicPropertyName)) }
+                .reduce(ExportedType::IntersectionType)
+                .let { if (klass.shouldNotBeImplemented()) ExportedType.IntersectionType(klass.generateTagType(), it) else it }
+            plus(
+                ExportedProperty(
+                    magicPropertyName,
+                    intersectionOfTypes,
+                    mutable = false,
+                    isMember = true,
+                    isStatic = false,
+                    isAbstract = false,
+                    isProtected = false,
+                    isField = true,
+                    irGetter = null,
+                    irSetter = null,
+                )
+            )
+        }
+    }
+
+    fun IrClass.asNestedClassAccess(): String {
+        val name = getJsNameOrKotlinName().identifier
+        if (parent !is IrClass) return name
+        return "${parentAsClass.asNestedClassAccess()}.$name"
     }
 
     private fun ExportedType.toTypeScript(indent: String, isInCommentContext: Boolean = false): String = when (this) {
@@ -423,6 +488,7 @@ class ExportModelToTsDeclarations {
             val typeString = type.toTypeScript("", true)
             if (isInCommentContext) typeString else ExportedType.Primitive.Any.toTypeScript(indent) + "/* $typeString */"
         }
+        is ExportedType.PropertyType -> "${container.toTypeScript(indent, isInCommentContext)}[${propertyName.toTypeScript(indent, isInCommentContext)}]"
         is ExportedType.TypeParameter -> if (constraint == null) {
             name
         } else {
