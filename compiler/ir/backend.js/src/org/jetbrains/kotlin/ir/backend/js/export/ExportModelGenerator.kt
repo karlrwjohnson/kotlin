@@ -324,9 +324,102 @@ class ExportModelGenerator(
             }
         }
 
+        if (klass.shouldContainImplementationOfMagicProperty()) {
+            members.addMagicPropertyForInterfaceImplementation(klass)
+        } else if (klass.shouldNotBeImplemented()) {
+            members.addMagicInterfaceProperty(klass)
+        }
+
         return ExportedClassDeclarationsInfo(
             members,
             nestedClasses
+        )
+    }
+
+    private fun IrClass.shouldNotBeImplemented(): Boolean {
+        return isInterface && !isExternal
+    }
+
+    private fun IrClass.shouldContainImplementationOfMagicProperty(): Boolean {
+        return !isExternal && superTypes.any {
+            val superClass = it.classifierOrNull?.owner as? IrClass ?: return@any false
+            superClass.isInterface && superClass.isExported(context)
+        }
+    }
+
+    private fun MutableList<ExportedDeclaration>.addMagicInterfaceProperty(klass: IrClass) {
+        add(
+            ExportedProperty(
+                magicPropertyName,
+                klass.generateTagType(),
+                mutable = false,
+                isMember = true,
+                isStatic = false,
+                isAbstract = false,
+                isProtected = false,
+                isField = true,
+                irGetter = null,
+                irSetter = null,
+            )
+        )
+    }
+
+    private fun MutableList<ExportedDeclaration>.addMagicPropertyForInterfaceImplementation(klass: IrClass) {
+        if (klass.superTypes.all { it.classifierOrNull?.isInterface != true }) {
+            return
+        }
+
+        val intersectionOfTypes = klass.superTypes
+            .filter { it.shouldAddMagicPropertyOfSuper(context) }
+            .map { ExportedType.PropertyType(exportType(it), ExportedType.LiteralType.StringLiteralType(magicPropertyName)) }
+            .reduce(ExportedType::IntersectionType)
+            .let { if (klass.shouldNotBeImplemented()) ExportedType.IntersectionType(klass.generateTagType(), it) else it }
+
+        add(
+            ExportedProperty(
+                magicPropertyName,
+                intersectionOfTypes,
+                mutable = false,
+                isMember = true,
+                isStatic = false,
+                isAbstract = false,
+                isProtected = false,
+                isField = true,
+                irGetter = null,
+                irSetter = null,
+            )
+        )
+    }
+
+    private fun IrType.shouldAddMagicPropertyOfSuper(context: JsIrBackendContext): Boolean {
+        val declaration = classifierOrNull?.owner as? IrClass ?: return false
+        return declaration.isOwnMagicPropertyAdded(context)
+    }
+
+    private fun IrClass.isOwnMagicPropertyAdded(context: JsIrBackendContext): Boolean {
+        if (!isExported(context)) return false
+        return isInterface || superTypes.any {
+            val klass = it.classifierOrNull?.owner as? IrClass ?: return@any false
+            klass.isExported(context) && klass.isOwnMagicPropertyAdded(context)
+        }
+    }
+
+    private fun IrClass.generateTagType(): ExportedType {
+        return ExportedType.InlineInterfaceType(
+            listOf(
+                ExportedProperty(
+                    getFqNameWithJsNameWhenAvailable(true).asString(),
+                    ExportedType.Primitive.UniqueSymbol,
+                    mutable = false,
+                    isMember = true,
+                    isStatic = false,
+                    isAbstract = false,
+                    isProtected = false,
+                    isField = true,
+                    irGetter = null,
+                    irSetter = null,
+                )
+            )
         )
     }
 

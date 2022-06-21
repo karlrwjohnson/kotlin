@@ -6,11 +6,17 @@
 package org.jetbrains.kotlin.ir.backend.js.export
 
 import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
+import org.jetbrains.kotlin.ir.backend.js.JsIrBackendContext
 import org.jetbrains.kotlin.ir.backend.js.utils.getFqNameWithJsNameWhenAvailable
 import org.jetbrains.kotlin.ir.backend.js.utils.getJsNameOrKotlinName
 import org.jetbrains.kotlin.ir.backend.js.utils.sanitizeName
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.util.isObject
+import org.jetbrains.kotlin.ir.declarations.IrDeclaration
+import org.jetbrains.kotlin.ir.types.classifierOrFail
+import org.jetbrains.kotlin.ir.types.classifierOrNull
+import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
+import org.jetbrains.kotlin.ir.util.isInterface
 import org.jetbrains.kotlin.ir.util.parentAsClass
 import org.jetbrains.kotlin.js.common.isValidES5Identifier
 import org.jetbrains.kotlin.serialization.js.ModuleKind
@@ -241,22 +247,14 @@ class ExportModelToTsDeclarations {
 
         val (memberObjects, nestedDeclarations) = nestedClasses.partition { it.couldBeProperty() }
 
-        val members = members
-            .let {
-                when {
-                    shouldContainImplementationOfMagicProperty() -> it.withMagicPropertyForInterfaceImplementation(this)
-                    shouldNotBeImplemented() -> it.withMagicInterfaceProperty(this)
-                    else -> it
-                }
+        val members = members.map {
+            if (!ir.isInner || it !is ExportedFunction || !it.isStatic) {
+                it
+            } else {
+                // Remove $outer argument from secondary constructors of inner classes
+                it.copy(parameters = it.parameters.drop(1))
             }
-            .map {
-                if (!ir.isInner || it !is ExportedFunction || !it.isStatic) {
-                    it
-                } else {
-                    // Remove $outer argument from secondary constructors of inner classes
-                    it.copy(parameters = it.parameters.drop(1))
-                }
-            } + memberObjects
+        } + memberObjects
 
         val (innerClasses, nonInnerClasses) = nestedDeclarations.partition { it.ir.isInner }
         val innerClassesProperties = innerClasses.map { it.toReadonlyProperty() }
