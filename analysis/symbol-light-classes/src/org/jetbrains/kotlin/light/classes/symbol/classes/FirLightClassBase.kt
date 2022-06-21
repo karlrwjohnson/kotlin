@@ -110,6 +110,8 @@ abstract class FirLightClassBase protected constructor(
         if (manager.areElementsEquivalent(baseClass, this)) return false
         LightClassInheritanceHelper.getService(project).isInheritor(this, baseClass, checkDeep).ifSure { return it }
 
+        if (supers.any { it == baseClass }) return true
+
         val thisClassOrigin = kotlinOrigin
         val baseClassOrigin = (baseClass as? KtLightClass)?.kotlinOrigin
 
