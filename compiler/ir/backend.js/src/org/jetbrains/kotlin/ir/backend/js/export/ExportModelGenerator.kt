@@ -24,14 +24,14 @@ import org.jetbrains.kotlin.ir.types.*
 import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.serialization.js.ModuleKind
 import org.jetbrains.kotlin.utils.addIfNotNull
+import org.jetbrains.kotlin.utils.addToStdlib.runIf
 import org.jetbrains.kotlin.utils.keysToMap
 
 private const val magicPropertyName = "__doNotUseOrImplementIt"
 
-class ExportModelGenerator(
-    val context: JsIrBackendContext,
-    val generateNamespacesForPackages: Boolean
-) {
+class ExportModelGenerator(val context: JsIrBackendContext, val generateNamespacesForPackages: Boolean) {
+    private val transitiveExportCollector = TransitiveExportCollector(context)
+
     fun generateExport(file: IrPackageFragment): List<ExportedDeclaration> {
         val namespaceFqName = file.fqName
         val exports = file.declarations.flatMap { declaration -> listOfNotNull(exportDeclaration(declaration)) }
@@ -64,10 +64,14 @@ class ExportModelGenerator(
         }
     }
 
-    private fun exportClass(candidate: IrClass) = if (candidate.isEnumClass) {
-        exportEnumClass(candidate)
-    } else {
-        exportOrdinaryClass(candidate)
+    private fun exportClass(candidate: IrClass): ExportedDeclaration? {
+        val superTypes = candidate.symbol.collectSuperTransitiveHierarchy() + candidate.superTypes
+
+        return if (candidate.isEnumClass) {
+            exportEnumClass(candidate, superTypes)
+        } else {
+            exportOrdinaryClass(candidate, superTypes)
+        }
     }
 
     private fun exportFunction(function: IrSimpleFunction): ExportedDeclaration? {
@@ -218,9 +222,7 @@ class ExportModelGenerator(
         return Exportability.Allowed
     }
 
-    private fun exportOrdinaryClass(
-        klass: IrClass
-    ): ExportedDeclaration? {
+    private fun exportOrdinaryClass(klass: IrClass, superTypes: Iterable<IrType>): ExportedDeclaration? {
         when (val exportability = classExportability(klass)) {
             is Exportability.Prohibited -> error(exportability.reason)
             is Exportability.NotNeeded -> return null
@@ -228,18 +230,17 @@ class ExportModelGenerator(
             }
         }
 
-        val (members, nestedClasses) = exportClassDeclarations(klass)
+        val (members, nestedClasses) = exportClassDeclarations(klass, superTypes)
 
         return exportClass(
             klass,
+            superTypes,
             members,
             nestedClasses
         )
     }
 
-    private fun exportEnumClass(
-        klass: IrClass
-    ): ExportedDeclaration? {
+    private fun exportEnumClass(klass: IrClass, superTypes: Iterable<IrType>): ExportedDeclaration? {
         when (val exportability = classExportability(klass)) {
             is Exportability.Prohibited -> error(exportability.reason)
             is Exportability.NotNeeded -> return null
@@ -256,7 +257,7 @@ class ExportModelGenerator(
             enumEntries
                 .keysToMap(enumEntries::indexOf)
 
-        val (members, nestedClasses) = exportClassDeclarations(klass) { candidate ->
+        val (members, nestedClasses) = exportClassDeclarations(klass, superTypes) { candidate ->
             val enumExportedMember = exportAsEnumMember(candidate, enumEntriesToOrdinal)
             enumExportedMember
         }
@@ -268,15 +269,15 @@ class ExportModelGenerator(
 
         return exportClass(
             klass,
+            superTypes,
             listOf(privateConstructor) + members,
             nestedClasses
-        ).let {
-            (it as ExportedRegularClass).copy(isAbstract = true)
-        }
+        )
     }
 
     private fun exportClassDeclarations(
         klass: IrClass,
+        superTypes: Iterable<IrType>,
         specialProcessing: (IrDeclarationWithName) -> ExportedDeclaration? = { null }
     ): ExportedClassDeclarationsInfo {
         val members = mutableListOf<ExportedDeclaration>()
@@ -325,8 +326,8 @@ class ExportModelGenerator(
             }
         }
 
-        if (klass.shouldContainImplementationOfMagicProperty()) {
-            members.addMagicPropertyForInterfaceImplementation(klass)
+        if (klass.shouldContainImplementationOfMagicProperty(superTypes)) {
+            members.addMagicPropertyForInterfaceImplementation(klass, superTypes)
         } else if (klass.shouldNotBeImplemented()) {
             members.addMagicInterfaceProperty(klass)
         }
@@ -341,7 +342,7 @@ class ExportModelGenerator(
         return isInterface && !isExternal
     }
 
-    private fun IrClass.shouldContainImplementationOfMagicProperty(): Boolean {
+    private fun IrClass.shouldContainImplementationOfMagicProperty(superTypes: Iterable<IrType>): Boolean {
         return !isExternal && superTypes.any {
             val superClass = it.classOrNull?.owner ?: return@any false
             superClass.isInterface && superClass.isExported(context)
@@ -365,8 +366,8 @@ class ExportModelGenerator(
         )
     }
 
-    private fun MutableList<ExportedDeclaration>.addMagicPropertyForInterfaceImplementation(klass: IrClass) {
-        val superTypesToInheritanceMagicProperty = klass.superTypes.filter { it.shouldAddMagicPropertyOfSuper(context) }
+    private fun MutableList<ExportedDeclaration>.addMagicPropertyForInterfaceImplementation(klass: IrClass, superTypes: Iterable<IrType>) {
+        val superTypesToInheritanceMagicProperty = superTypes.filter { it.shouldAddMagicPropertyOfSuper(context) }
 
         if (superTypesToInheritanceMagicProperty.isEmpty()) return
 
@@ -425,20 +426,20 @@ class ExportModelGenerator(
 
     private fun exportClass(
         klass: IrClass,
+        superTypes: Iterable<IrType>,
         members: List<ExportedDeclaration>,
-        nestedClasses: List<ExportedClass>
+        nestedClasses: List<ExportedClass>,
     ): ExportedDeclaration {
         val typeParameters = klass.typeParameters.map { it.name.identifier }
 
-        // TODO: Handle non-exported super types
+        val superClasses = superTypes
+            .filter { !it.classifierOrFail.isInterface && it.canBeUsedAsSuperTypeOfExportedClasses() }
+            .map { exportType(it, false) }
+            .filter { it !is ExportedType.ErrorType }
 
-        val superType = klass.superTypes
-            .firstOrNull { !it.classifierOrFail.isInterface && it.canBeUsedAsSuperTypeOfExportedClasses() }
-            ?.let { exportType(it).takeIf { it !is ExportedType.ErrorType } }
-
-        val superInterfaces = klass.superTypes
+        val superInterfaces = superTypes
             .filter { it.classifierOrFail.isInterface }
-            .map { exportType(it) }
+            .map { exportType(it, false) }
             .filter { it !is ExportedType.ErrorType }
 
         val name = klass.getExportedIdentifier()
@@ -448,7 +449,7 @@ class ExportModelGenerator(
                 ir = klass,
                 name = name,
                 members = members,
-                superClass = superType,
+                superClasses = superClasses,
                 nestedClasses = nestedClasses,
                 superInterfaces = superInterfaces,
                 irGetter = context.mapping.objectToGetInstanceFunction[klass]!!
@@ -457,8 +458,8 @@ class ExportModelGenerator(
             ExportedRegularClass(
                 name = name,
                 isInterface = klass.isInterface,
-                isAbstract = klass.modality == Modality.ABSTRACT || klass.modality == Modality.SEALED,
-                superClass = superType,
+                isAbstract = klass.modality == Modality.ABSTRACT || klass.modality == Modality.SEALED || klass.isEnumClass,
+                superClasses = superClasses,
                 superInterfaces = superInterfaces,
                 typeParameters = typeParameters,
                 members = members,
@@ -467,6 +468,9 @@ class ExportModelGenerator(
             )
         }
     }
+
+    private fun IrClassSymbol.collectSuperTransitiveHierarchy(): Set<IrType> =
+        transitiveExportCollector.collectSuperTransitiveHierarchyFor(this)
 
     private fun exportAsEnumMember(
         candidate: IrDeclarationWithName,
@@ -521,8 +525,15 @@ class ExportModelGenerator(
     private fun exportTypeParameter(typeParameter: IrTypeParameter): ExportedType.TypeParameter {
         val constraint = typeParameter.superTypes.asSequence()
             .filter { it != context.irBuiltIns.anyNType }
-            .map(::exportType)
-            .filter { it !is ExportedType.ErrorType && it !is ExportedType.ImplicitlyExportedType }
+            .map {
+                val exportedType = exportType(it)
+                if (exportedType is ExportedType.ImplicitlyExportedType && exportedType.exportedSupertype == ExportedType.Primitive.Any) {
+                    exportedType.copy(exportedSupertype = ExportedType.Primitive.Unknown)
+                } else {
+                    exportedType
+                }
+            }
+            .filter { it !is ExportedType.ErrorType }
             .toList()
 
         return ExportedType.TypeParameter(
@@ -537,7 +548,7 @@ class ExportModelGenerator(
         )
     }
 
-    private fun exportType(type: IrType): ExportedType {
+    private fun exportType(type: IrType, shouldCalculateExportedSupertypeForImplicit: Boolean = true): ExportedType {
         if (type is IrDynamicType)
             return ExportedType.Primitive.Any
 
@@ -585,6 +596,12 @@ class ExportModelGenerator(
                 val isNonExportedExternal = klass.isExternal && !isExported
                 val name = klass.getFqNameWithJsNameWhenAvailable(!isNonExportedExternal && generateNamespacesForPackages).asString()
 
+                val exportedSupertype = runIf(shouldCalculateExportedSupertypeForImplicit && isImplicitlyExported) {
+                    val transitiveExportedType = classifier.collectSuperTransitiveHierarchy()
+                    if (transitiveExportedType.isEmpty()) return@runIf null
+                    transitiveExportedType.map(::exportType).reduce(ExportedType::IntersectionType)
+                } ?: ExportedType.Primitive.Any
+
                 when (klass.kind) {
                     ClassKind.ANNOTATION_CLASS,
                     ClassKind.ENUM_ENTRY ->
@@ -600,7 +617,7 @@ class ExportModelGenerator(
                         type.arguments.map { exportTypeArgument(it) },
                         klass
                     )
-                }.withImplicitlyExported(isImplicitlyExported)
+                }.withImplicitlyExported(isImplicitlyExported, exportedSupertype)
             }
 
             else -> error("Unexpected classifier $classifier")
