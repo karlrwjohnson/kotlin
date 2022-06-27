@@ -343,7 +343,7 @@ class ExportModelGenerator(
 
     private fun IrClass.shouldContainImplementationOfMagicProperty(): Boolean {
         return !isExternal && superTypes.any {
-            val superClass = it.classifierOrNull?.owner as? IrClass ?: return@any false
+            val superClass = it.classOrNull?.owner ?: return@any false
             superClass.isInterface && superClass.isExported(context)
         }
     }
@@ -366,7 +366,7 @@ class ExportModelGenerator(
     }
 
     private fun MutableList<ExportedDeclaration>.addMagicPropertyForInterfaceImplementation(klass: IrClass) {
-        if (klass.superTypes.all { it.classifierOrNull?.isInterface != true }) {
+        if (klass.superTypes.none { it.isInterface() }) {
             return
         }
 
@@ -393,14 +393,14 @@ class ExportModelGenerator(
     }
 
     private fun IrType.shouldAddMagicPropertyOfSuper(context: JsIrBackendContext): Boolean {
-        val declaration = classifierOrNull?.owner as? IrClass ?: return false
+        val declaration = classOrNull?.owner ?: return false
         return declaration.isOwnMagicPropertyAdded(context)
     }
 
     private fun IrClass.isOwnMagicPropertyAdded(context: JsIrBackendContext): Boolean {
         if (!isExported(context)) return false
         return isInterface || superTypes.any {
-            val klass = it.classifierOrNull?.owner as? IrClass ?: return@any false
+            val klass = it.classOrNull?.owner ?: return@any false
             klass.isExported(context) && klass.isOwnMagicPropertyAdded(context)
         }
     }
