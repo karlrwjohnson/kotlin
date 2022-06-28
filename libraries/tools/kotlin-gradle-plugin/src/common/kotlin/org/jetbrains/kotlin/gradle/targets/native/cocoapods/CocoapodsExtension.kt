@@ -6,13 +6,11 @@
 @file:Suppress("PackageDirectoryMismatch") // Old package for compatibility
 package org.jetbrains.kotlin.gradle.plugin.cocoapods
 
-import groovy.lang.Closure
 import org.gradle.api.Action
 import org.gradle.api.Named
 import org.gradle.api.NamedDomainObjectSet
 import org.gradle.api.Project
 import org.gradle.api.tasks.*
-import org.gradle.util.ConfigureUtil
 import org.jetbrains.kotlin.gradle.dsl.multiplatformExtension
 import org.jetbrains.kotlin.gradle.plugin.cocoapods.CocoapodsExtension.CocoapodsDependency.PodLocation.*
 import org.jetbrains.kotlin.gradle.plugin.mpp.Framework
@@ -23,8 +21,9 @@ import org.jetbrains.kotlin.gradle.tasks.addArgs
 import org.jetbrains.kotlin.konan.target.HostManager
 import java.io.File
 import java.net.URI
+import javax.inject.Inject
 
-open class CocoapodsExtension(private val project: Project) {
+abstract class CocoapodsExtension(private val project: Project) {
     /**
      * Configure version of the pod
      */
@@ -183,7 +182,16 @@ open class CocoapodsExtension(private val project: Project) {
             project.logger.warn(warnMessage)
             podSource = path.parentFile
         }
-        addToPods(CocoapodsDependency(name, moduleName, headers, version, podSource?.let { Path(it) }))
+        addToPods(
+            project.objects.newInstance(
+                CocoapodsDependency::class.java,
+                name,
+                moduleName,
+                headers,
+                version,
+                podSource?.let { Path(it) }
+            )
+        )
     }
 
 
@@ -194,7 +202,7 @@ open class CocoapodsExtension(private val project: Project) {
         // Empty string will lead to an attempt to create two podDownload tasks.
         // One is original podDownload and second is podDownload + pod.name
         require(name.isNotEmpty()) { "Please provide not empty pod name to avoid ambiguity" }
-        val dependency = CocoapodsDependency(name, name.asModuleName())
+        val dependency = project.objects.newInstance(CocoapodsDependency::class.java, name, name.asModuleName())
         dependency.configure()
         addToPods(dependency)
     }
@@ -202,8 +210,8 @@ open class CocoapodsExtension(private val project: Project) {
     /**
      * Add a CocoaPods dependency to the pod built from this project.
      */
-    fun pod(name: String, configure: Closure<*>) = pod(name) {
-        ConfigureUtil.configure(configure, this)
+    fun pod(name: String, configure: Action<CocoapodsDependency>) = pod(name) {
+        configure.execute(this)
     }
 
     private fun addToPods(dependency: CocoapodsDependency) {
@@ -226,8 +234,8 @@ open class CocoapodsExtension(private val project: Project) {
      * for additional information.
      * Default sources (cdn.cocoapods.org) implicitly included.
      */
-    fun specRepos(configure: Closure<*>) = specRepos {
-        ConfigureUtil.configure(configure, this)
+    fun specRepos(configure: Action<SpecRepos>) = specRepos {
+        configure.execute(this)
     }
 
     private fun configureRegisteredFrameworks(configure: Framework.() -> Unit) {
@@ -268,7 +276,7 @@ open class CocoapodsExtension(private val project: Project) {
         }
     }
 
-    data class CocoapodsDependency(
+    abstract class CocoapodsDependency @Inject constructor(
         private val name: String,
         @get:Input var moduleName: String,
         @get:Optional @get:Input var headers: String? = null,
@@ -317,8 +325,8 @@ open class CocoapodsExtension(private val project: Project) {
         /**
          * Configure pod from git repository. The podspec file is expected to be in the repository root.
          */
-        fun git(url: String, configure: Closure<*>) = git(url) {
-            ConfigureUtil.configure(configure, this)
+        fun git(url: String, configure: Action<Git>) = git(url) {
+            configure.execute(this)
         }
 
         sealed class PodLocation {
