@@ -12,7 +12,7 @@ import org.gradle.api.artifacts.ConfigurablePublishArtifact
 import org.gradle.api.artifacts.PublishArtifact
 import org.gradle.api.attributes.Attribute
 import org.gradle.api.attributes.AttributeContainer
-import org.gradle.api.attributes.Usage.JAVA_RUNTIME_JARS
+import org.gradle.api.attributes.Usage
 import org.gradle.api.component.ComponentWithCoordinates
 import org.gradle.api.component.ComponentWithVariants
 import org.gradle.api.component.SoftwareComponent
@@ -125,8 +125,8 @@ abstract class AbstractKotlinTarget(
 
                     adhocVariant.addVariantsFromConfiguration(configuration) { configurationVariantDetails ->
                         val mavenScope = when (kotlinUsageContext.usage.name) {
-                            "java-api-jars" -> "compile"
-                            "java-runtime-jars" -> "runtime"
+                            Usage.JAVA_API -> "compile"
+                            Usage.JAVA_RUNTIME -> "runtime"
                             else -> error("unexpected usage value '${kotlinUsageContext.usage.name}'")
                         }
                         configurationVariantDetails.mapToMavenScope(mavenScope)
@@ -178,7 +178,7 @@ abstract class AbstractKotlinTarget(
         // These Java usages should not be replaced with the custom Kotlin usages.
         return listOfNotNull(
             javaApiUsageForMavenScoping() to apiElementsConfigurationName,
-            (JAVA_RUNTIME_JARS to runtimeElementsConfigurationName).takeIf { producingCompilation is KotlinCompilationToRunnableFiles }
+            (Usage.JAVA_RUNTIME to runtimeElementsConfigurationName).takeIf { producingCompilation is KotlinCompilationToRunnableFiles }
         ).mapTo(mutableSetOf()) { (usageName, dependenciesConfigurationName) ->
             DefaultKotlinUsageContext(
                 producingCompilation,
@@ -283,7 +283,7 @@ internal fun originalVariantNameFromPublished(publishedConfigurationName: String
 internal fun KotlinTarget.disambiguateName(simpleName: String) =
     lowerCamelCaseName(targetName, simpleName)
 
-internal fun javaApiUsageForMavenScoping() = "java-api-jars"
+internal fun javaApiUsageForMavenScoping() = Usage.JAVA_API
 
 abstract class KotlinOnlyTarget<T : KotlinCompilation<*>>(
     project: Project,

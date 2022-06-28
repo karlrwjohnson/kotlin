@@ -59,7 +59,7 @@ abstract class KotlinSoftwareComponent(
 
         mutableSetOf<UsageContext>().apply {
             // This usage value is only needed for Maven scope mapping. Don't replace it with a custom Kotlin Usage value
-            val javaApiUsage = project.usageByName("java-api-jars")
+            val javaApiUsage = project.usageByName(Usage.JAVA_API)
 
             val allMetadataJar = project.tasks.named(KotlinMetadataTargetConfigurator.ALL_METADATA_JAR_NAME)
             val allMetadataArtifact = project.artifacts.add(Dependency.ARCHIVES_CONFIGURATION, allMetadataJar) { allMetadataArtifact ->

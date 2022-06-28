@@ -52,7 +52,7 @@ object KotlinUsages {
 
     internal fun producerApiUsage(project: Project, platformType: KotlinPlatformType) = project.usageByName(
         when (platformType) {
-            in jvmPlatformTypes -> "java-api-jars"
+            in jvmPlatformTypes -> Usage.JAVA_API
             else -> KOTLIN_API
         }
     )
@@ -61,7 +61,7 @@ object KotlinUsages {
 
     internal fun producerRuntimeUsage(project: Project, platformType: KotlinPlatformType) = project.usageByName(
         when (platformType) {
-            in jvmPlatformTypes -> "java-runtime-jars"
+            in jvmPlatformTypes -> JAVA_RUNTIME
             else -> KOTLIN_RUNTIME
         }
     )

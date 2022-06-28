@@ -122,13 +122,13 @@ private fun associateDependenciesWithActualModuleDependencies(
                 val variantName = compilation.name
                 when (usageContext.usage.name) {
                     Usage.JAVA_API, "java-api-jars" -> variantName + "CompileClasspath"
-                    Usage.JAVA_RUNTIME_JARS -> variantName + "RuntimeClasspath"
+                    Usage.JAVA_RUNTIME, "java-runtime-jars" -> variantName + "RuntimeClasspath"
                     else -> error("Unexpected Usage for usage context: ${usageContext.usage}")
                 }
             }
             else -> when (usageContext.usage.name) {
                 Usage.JAVA_API, "java-api-jars" -> compilation.compileDependencyConfigurationName
-                Usage.JAVA_RUNTIME_JARS -> (compilation as KotlinCompilationToRunnableFiles).runtimeDependencyConfigurationName
+                Usage.JAVA_RUNTIME, "java-runtime-jars" -> (compilation as KotlinCompilationToRunnableFiles).runtimeDependencyConfigurationName
                 else -> error("Unexpected Usage for usage context: ${usageContext.usage}")
             }
         }

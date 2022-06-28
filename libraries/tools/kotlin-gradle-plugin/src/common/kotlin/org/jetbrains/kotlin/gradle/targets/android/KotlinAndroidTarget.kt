@@ -12,7 +12,7 @@ import org.gradle.api.Named
 import org.gradle.api.NamedDomainObjectContainer
 import org.gradle.api.Project
 import org.gradle.api.attributes.Attribute
-import org.gradle.api.attributes.Usage.JAVA_RUNTIME_JARS
+import org.gradle.api.attributes.Usage.JAVA_RUNTIME
 import org.jetbrains.kotlin.gradle.plugin.*
 import org.jetbrains.kotlin.gradle.utils.dashSeparatedName
 import org.jetbrains.kotlin.gradle.utils.lowerCamelCaseName
@@ -199,7 +199,7 @@ open class KotlinAndroidTarget(
         // These Java usages should not be replaced with the custom Kotlin usages.
         return listOf(
             apiElementsConfigurationName to javaApiUsageForMavenScoping(),
-            runtimeElementsConfigurationName to JAVA_RUNTIME_JARS
+            runtimeElementsConfigurationName to JAVA_RUNTIME
         ).mapTo(mutableSetOf()) { (dependencyConfigurationName, usageName) ->
             val configuration = project.configurations.getByName(dependencyConfigurationName)
             DefaultKotlinUsageContext(
