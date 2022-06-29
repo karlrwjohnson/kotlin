@@ -54,5 +54,8 @@ class LocalFunctionGenerator(statementGenerator: StatementGenerator) : Statement
     }
 
     private fun generateFunctionDeclaration(ktFun: KtNamedFunction) =
-        FunctionGenerator(context).generateFunctionDeclaration(ktFun, IrDeclarationOrigin.LOCAL_FUNCTION)
+        FunctionGenerator(context).generateFunctionDeclaration(
+            ktFun,
+            if (ktFun.name != null) IrDeclarationOrigin.LOCAL_FUNCTION else IrDeclarationOrigin.LOCAL_FUNCTION_FOR_LAMBDA
+        )
 }
